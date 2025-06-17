@@ -1,0 +1,65 @@
+// dht11.h
+#ifndef DHT11_H
+#define DHT11_H
+
+#include <stdint.h>
+
+uint8_t read_dht11(void);
+extern uint8_t temperature, humidity;
+extern uint8_t checksum_error;
+extern uint8_t timeout_flag;
+
+#endif
+
+// dht11.c
+#include <xc.h>
+#include "dht11.h"
+
+#define DHT11_PIN PORTCbits.RC1
+#define DHT11_DIR TRISCbits.TRISC1
+
+uint8_t temperature, humidity;
+uint8_t checksum_error = 0;
+uint8_t timeout_flag = 0;
+
+uint8_t read_dht11(void) {
+    uint8_t data[5] = {0};
+    uint8_t i, j;
+
+    checksum_error = 0;
+    timeout_flag = 0;
+
+    DHT11_DIR = 0;
+    DHT11_PIN = 0;
+    __delay_ms(20);
+    DHT11_PIN = 1;
+    __delay_us(30);
+    DHT11_DIR = 1;
+
+    for (i = 0; i < 255 && DHT11_PIN; i++) __delay_us(1);
+    if (i >= 255) { timeout_flag = 1; return 0; }
+
+    for (i = 0; i < 255 && !DHT11_PIN; i++) __delay_us(1);
+    if (i >= 255) { timeout_flag = 1; return 0; }
+
+    for (i = 0; i < 255 && DHT11_PIN; i++) __delay_us(1);
+    if (i >= 255) { timeout_flag = 1; return 0; }
+
+    for (i = 0; i < 5; i++) {
+        for (j = 0; j < 8; j++) {
+            while (!DHT11_PIN);
+            __delay_us(30);
+            if (DHT11_PIN) data[i] |= (1 << (7 - j));
+            while (DHT11_PIN);
+        }
+    }
+
+    if (data[4] != (data[0] + data[1] + data[2] + data[3])) {
+        checksum_error = 1;
+        return 0;
+    }
+
+    humidity = data[0];
+    temperature = data[2];
+    return 1;
+}
