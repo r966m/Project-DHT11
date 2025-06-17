@@ -1,27 +1,98 @@
-// dht11.h
-#ifndef DHT11_H
-#define DHT11_H
-
+#include <xc.h>
 #include <stdint.h>
 
-uint8_t read_dht11(void);
-extern uint8_t temperature, humidity;
-extern uint8_t checksum_error;
-extern uint8_t timeout_flag;
+// CONFIG
+#pragma config FOSC = HS        
+#pragma config WDTE = OFF       
+#pragma config PWRTE = ON       
+#pragma config BOREN = ON       
+#pragma config LVP = OFF        
+#pragma config CPD = OFF        
+#pragma config WRT = OFF        
+#pragma config CP = OFF         
 
-#endif
+#define _XTAL_FREQ 4000000
 
-// dht11.c
-#include <xc.h>
-#include "dht11.h"
-
+// Pins
 #define DHT11_PIN PORTCbits.RC1
 #define DHT11_DIR TRISCbits.TRISC1
+#define LED       PORTDbits.RD6
+#define BUZZER    PORTDbits.RD7
 
+#define LCDPORT PORTB
+#define RS PORTBbits.RB0
+#define RW PORTBbits.RB1
+#define E  PORTBbits.RB2
+
+#define FIRST_LINE  0x80
+#define SECOND_LINE 0xC0
+#define ALERT_TEMP  25  // ✅ Alert threshold for both LED and Buzzer
+
+// Globals
 uint8_t temperature, humidity;
 uint8_t checksum_error = 0;
 uint8_t timeout_flag = 0;
+unsigned char status = 0;
 
+// ========== LCD FUNCTIONS ==========
+void lcd_delay(unsigned int t) {
+    while (t--) __delay_us(100);
+}
+
+void lcd_init_write(unsigned char a) {
+    RS = 0; RW = 0;
+    LCDPORT = a;
+    E = 1; lcd_delay(3);
+    E = 0;
+}
+
+void lcd_com(unsigned char a) {
+    unsigned char temp;
+    if (status) {
+        status = 0;
+        goto next;
+    }
+    RS = 0;
+next:
+    RW = 0;
+    temp = a & 0xF0;
+    LCDPORT &= 0x0F;
+    LCDPORT |= temp;
+    E = 1; lcd_delay(1); E = 0;
+    temp = (a << 4) & 0xF0;
+    LCDPORT &= 0x0F;
+    LCDPORT |= temp;
+    E = 1; lcd_delay(1); E = 0;
+}
+
+void lcd_data(unsigned char a) {
+    status = 1; RS = 1;
+    lcd_com(a);
+}
+
+void lcd_puts(char *str) {
+    while (*str) lcd_data(*str++);
+}
+
+void lcd_init(void) {
+    lcd_delay(15);
+    lcd_init_write(0x30); lcd_delay(5);
+    lcd_init_write(0x30); lcd_delay(5);
+    lcd_init_write(0x30); lcd_delay(5);
+    lcd_init_write(0x20); lcd_delay(5);
+    lcd_com(0x28);
+    lcd_com(0x0C);
+    lcd_com(0x06);
+    lcd_com(0x01);
+    lcd_delay(5);
+}
+
+void clear_screen(void) {
+    lcd_com(FIRST_LINE); lcd_puts("                ");
+    lcd_com(SECOND_LINE); lcd_puts("                ");
+}
+
+// ========== DHT11 FUNCTION ==========
 uint8_t read_dht11(void) {
     uint8_t data[5] = {0};
     uint8_t i, j;
@@ -29,6 +100,7 @@ uint8_t read_dht11(void) {
     checksum_error = 0;
     timeout_flag = 0;
 
+    // Start signal
     DHT11_DIR = 0;
     DHT11_PIN = 0;
     __delay_ms(20);
@@ -36,6 +108,7 @@ uint8_t read_dht11(void) {
     __delay_us(30);
     DHT11_DIR = 1;
 
+    // Wait for DHT response
     for (i = 0; i < 255 && DHT11_PIN; i++) __delay_us(1);
     if (i >= 255) { timeout_flag = 1; return 0; }
 
@@ -45,6 +118,7 @@ uint8_t read_dht11(void) {
     for (i = 0; i < 255 && DHT11_PIN; i++) __delay_us(1);
     if (i >= 255) { timeout_flag = 1; return 0; }
 
+    // Read data
     for (i = 0; i < 5; i++) {
         for (j = 0; j < 8; j++) {
             while (!DHT11_PIN);
@@ -62,4 +136,76 @@ uint8_t read_dht11(void) {
     humidity = data[0];
     temperature = data[2];
     return 1;
+}
+
+// ========== UI ==========
+void display_results(void) {
+    char t[16] = "Temp: 00 C";
+    char h[16] = "Humidity: 00%";
+
+    t[6] = (temperature / 10) + '0';
+    t[7] = (temperature % 10) + '0';
+    t[8] = 0xDF;
+
+    h[10] = (humidity / 10) + '0';
+    h[11] = (humidity % 10) + '0';
+
+    lcd_com(FIRST_LINE); lcd_puts(t);
+    lcd_com(SECOND_LINE); lcd_puts(h);
+}
+
+void display_error(const char *line1, const char *line2) {
+    clear_screen();
+    lcd_com(FIRST_LINE); lcd_puts(line1);
+    lcd_com(SECOND_LINE); lcd_puts(line2);
+}
+
+void check_temperature_alerts(void) {
+    if (temperature >= ALERT_TEMP) {
+        LED = 1;
+        BUZZER = 1;
+    } else {
+        LED = 0;
+        BUZZER = 0;
+    }
+}
+
+void intro_screen(void) {
+    lcd_com(FIRST_LINE); lcd_puts("DHT11 + LCD");
+    lcd_com(SECOND_LINE); lcd_puts("YEMEN 8=>");
+    __delay_ms(2000);
+    clear_screen();
+}
+
+void system_init(void) {
+    TRISB = 0x00; // LCD
+    TRISCbits.TRISC1 = 1; // DHT11 (RC1/pin 22) input
+    TRISD &= ~(1 << 6);   // RD6 output
+    TRISD &= ~(1 << 7);   // RD7 output
+    LED = 0; BUZZER = 0;
+    lcd_init();
+    clear_screen();
+}
+
+// ========== MAIN ==========
+void main(void) {
+    system_init();
+    intro_screen();
+
+    while (1) {
+        __delay_ms(2000);
+        if (read_dht11()) {
+            display_results();
+            check_temperature_alerts();
+        } else {
+            LED = 0;
+            BUZZER = 0;
+            if (timeout_flag)
+                display_error("Timeout Error", "Check Sensor");
+            else if (checksum_error)
+                display_error("Checksum Error", "Bad Data");
+            else
+                display_error("Unknown Error", "Try Again");
+        }
+    }
 }
