@@ -1,0 +1,127 @@
+// lcd.h
+#ifndef LCD_H
+#define LCD_H
+
+#define FIRST_LINE  0x80
+#define SECOND_LINE 0xC0
+
+void lcd_init(void);
+void lcd_com(unsigned char a);
+void lcd_data(unsigned char a);
+void lcd_puts(char *str);
+void clear_screen(void);
+void display_results(void);
+void display_error(const char *line1, const char *line2);
+void check_temperature_alerts(void);
+void intro_screen(void);
+
+#endif
+
+// lcd.c
+#include <xc.h>
+#include "lcd.h"
+
+extern unsigned char status;
+extern uint8_t temperature, humidity;
+#define LCDPORT PORTB
+#define RS PORTBbits.RB0
+#define RW PORTBbits.RB1
+#define E  PORTBbits.RB2
+#define LED       PORTDbits.RD6
+#define BUZZER    PORTDbits.RD7
+#define ALERT_TEMP 25
+
+void lcd_delay(unsigned int t) {
+    while (t--) __delay_us(100);
+}
+
+void lcd_init_write(unsigned char a) {
+    RS = 0; RW = 0;
+    LCDPORT = a;
+    E = 1; lcd_delay(3);
+    E = 0;
+}
+
+void lcd_com(unsigned char a) {
+    unsigned char temp;
+    if (status) {
+        status = 0;
+        goto next;
+    }
+    RS = 0;
+next:
+    RW = 0;
+    temp = a & 0xF0;
+    LCDPORT &= 0x0F;
+    LCDPORT |= temp;
+    E = 1; lcd_delay(1); E = 0;
+    temp = (a << 4) & 0xF0;
+    LCDPORT &= 0x0F;
+    LCDPORT |= temp;
+    E = 1; lcd_delay(1); E = 0;
+}
+
+void lcd_data(unsigned char a) {
+    status = 1; RS = 1;
+    lcd_com(a);
+}
+
+void lcd_puts(char *str) {
+    while (*str) lcd_data(*str++);
+}
+
+void lcd_init(void) {
+    lcd_delay(15);
+    lcd_init_write(0x30); lcd_delay(5);
+    lcd_init_write(0x30); lcd_delay(5);
+    lcd_init_write(0x30); lcd_delay(5);
+    lcd_init_write(0x20); lcd_delay(5);
+    lcd_com(0x28);
+    lcd_com(0x0C);
+    lcd_com(0x06);
+    lcd_com(0x01);
+    lcd_delay(5);
+}
+
+void clear_screen(void) {
+    lcd_com(FIRST_LINE); lcd_puts("                ");
+    lcd_com(SECOND_LINE); lcd_puts("                ");
+}
+
+void display_results(void) {
+    char t[16] = "Temp: 00 C";
+    char h[16] = "Humidity: 00%";
+
+    t[6] = (temperature / 10) + '0';
+    t[7] = (temperature % 10) + '0';
+    t[8] = 0xDF;
+
+    h[10] = (humidity / 10) + '0';
+    h[11] = (humidity % 10) + '0';
+
+    lcd_com(FIRST_LINE); lcd_puts(t);
+    lcd_com(SECOND_LINE); lcd_puts(h);
+}
+
+void display_error(const char *line1, const char *line2) {
+    clear_screen();
+    lcd_com(FIRST_LINE); lcd_puts(line1);
+    lcd_com(SECOND_LINE); lcd_puts(line2);
+}
+
+void check_temperature_alerts(void) {
+    if (temperature >= ALERT_TEMP) {
+        LED = 1;
+        BUZZER = 1;
+    } else {
+        LED = 0;
+        BUZZER = 0;
+    }
+}
+
+void intro_screen(void) {
+    lcd_com(FIRST_LINE); lcd_puts("DHT11 + LCD");
+    lcd_com(SECOND_LINE); lcd_puts("YEMEN 8=>");
+    __delay_ms(2000);
+    clear_screen();
+} 
